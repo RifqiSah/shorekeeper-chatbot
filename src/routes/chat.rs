@@ -2,8 +2,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde_json::json;
 
 use crate::{
-  models::chat::{ChatMessage, ChatRequest, ChatResponse, SemanticCacheEntry},
-  AppState,
+  AppState, models::chat::{ChatMessage, ChatRequest, ChatResponse, SemanticCacheEntry}, services::redis::RateLimitResult
 };
 
 pub async fn chat_handler(
@@ -54,6 +53,26 @@ pub async fn chat_handler(
       Err(e) => tracing::warn!("Semantic cache error: {}", e),
     }
   }
+
+  // Check rate limit
+  match state
+    .redis
+    .check_rate_limit(user_id, guild_id, state.config.daily_request_limit)
+    .await {
+      Ok(RateLimitResult { allowed: false, current, limit, .. }) => {
+        tracing::warn!("Rate limit exceeded - user: {}, count: {}/{}", user_id, current, limit);
+        return Err((
+          StatusCode::TOO_MANY_REQUESTS,
+          Json(json!({
+            "error": "Daily request limit reached. Try again tomorrow.",
+            "limit": limit,
+            "used": current,
+          })),
+        ));
+      },
+      Ok(r) => tracing::debug!("Rate limit ok - user: {}, {}/{}", user_id, r.current, r.limit),
+      Err(e) => tracing::warn!("Rate limit check failed ({}), allowing request", e),
+    }
 
   // Get conv history
   let mut history = state

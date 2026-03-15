@@ -24,6 +24,9 @@ pub struct Config {
   pub semantic_cache_ttl_seconds: u64,
   pub similarity_threshold: f32,
   pub system_prompt: String,
+
+  // User config
+  pub daily_request_limit: u64,
 }
 
 impl Config {
@@ -73,6 +76,11 @@ impl Config {
         .unwrap_or(0.92),
       system_prompt: std::env::var("SYSTEM_PROMPT")
         .unwrap_or_else(|_| "Kamu adalah asisten AI yang ramah dan helpful.".into()),
+
+      daily_request_limit: std::env::var("DAILY_REQUEST_LIMIT")
+        .unwrap_or_else(|_| "500".into())
+        .parse()
+        .unwrap_or(500),
     })
   }
 }

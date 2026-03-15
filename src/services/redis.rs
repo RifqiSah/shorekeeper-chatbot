@@ -8,6 +8,14 @@ pub struct RedisService {
   conn: ConnectionManager,
 }
 
+#[derive(Debug)]
+pub struct RateLimitResult {
+  pub allowed: bool,
+  pub current: u64,
+  pub limit: u64,
+  pub remaining: u64,
+}
+
 impl RedisService {
   pub async fn new(redis_url: &str) -> Result<Self> {
     let client = Client::open(redis_url)?;
@@ -19,8 +27,8 @@ impl RedisService {
   // Conv history
   fn history_key(user_id: &str, guild_id: Option<&str>) -> String {
     match guild_id {
-      Some(gid) => format!("chat:{}:{}", gid, user_id),
-      None => format!("chat:dm:{}", user_id),
+      Some(gid) => format!("sk_ai:chat:{}:{}", gid, user_id),
+      None => format!("sk_ai:chat:dm:{}", user_id),
     }
   }
 
@@ -84,12 +92,12 @@ impl RedisService {
     let mut conn = self.conn.clone();
 
     // Key from question hash
-    let key = format!("semcache:{}", hash_question(&entry.question));
+    let key = format!("sk_ai:semcache:{}", hash_question(&entry.question));
     let serialized = serde_json::to_string(entry)?;
     conn.set_ex::<_, _, ()>(&key, serialized, ttl_seconds).await?;
 
     // Add to index list for scanning
-    let index_key = "semcache:index";
+    let index_key = "sk_ai:semcache:index";
     conn.lpush::<_, _, ()>(index_key, &key).await?;
     conn.ltrim::<_, ()>(index_key, 0, 999).await?; // max 1000 cache entries
 
@@ -105,7 +113,7 @@ impl RedisService {
     let mut conn = self.conn.clone();
 
     // Get all keys from index list
-    let keys: Vec<String> = conn.lrange("semcache:index", 0, -1).await?;
+    let keys: Vec<String> = conn.lrange("sk_ai:semcache:index", 0, -1).await?;
 
     let mut best_score = 0.0f32;
     let mut best_answer: Option<String> = None;
@@ -128,6 +136,46 @@ impl RedisService {
     }
 
     Ok(best_answer)
+  }
+
+  /// Rate limit
+  pub async fn check_rate_limit(
+    &self,
+    user_id: &str,
+    guild_id: Option<&str>,
+    daily_limit: u64,
+  ) -> Result<RateLimitResult> {
+    let mut conn = self.conn.clone();
+
+    // Reset every day, use UTC for suffix
+    let today = {
+      use std::time::{SystemTime, UNIX_EPOCH};
+      let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+      secs / 86400 // hari ke-N sejak epoch
+    };
+
+    let key = match guild_id {
+      Some(gid) => format!("sk_ai:ratelimit:{}:{}:{}", gid, user_id, today),
+      None => format!("sk_ai:ratelimit:dm:{}:{}", user_id, today),
+    };
+
+    // INCR atomic
+    let count: u64 = conn.incr::<_, _, u64>(&key, 1u64).await?;
+
+    // Set TTL only for first request
+    if count == 1 {
+      conn.expire::<_, ()>(&key, 86400).await?;
+    }
+
+    Ok(RateLimitResult {
+      allowed: count <= daily_limit,
+      current: count,
+      limit: daily_limit,
+      remaining: daily_limit.saturating_sub(count),
+    })
   }
 
   /// Ping for health check
