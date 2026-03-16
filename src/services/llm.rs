@@ -10,6 +10,7 @@ pub struct LlmService {
   // LLM
   llm_api_key: String,
   llm_base_url: String,
+  llm_aig_token: Option<String>,
   pub model: String,
 
   // Embedding, independent
@@ -63,6 +64,7 @@ impl LlmService {
   pub fn new(
     llm_api_key: String,
     llm_base_url: String,
+    llm_aig_token: Option<String>,
     model: String,
     embed_api_key: String,
     embed_base_url: String,
@@ -72,7 +74,7 @@ impl LlmService {
       .build()
       .expect("Failed to build HTTP client");
 
-    Self { client, llm_api_key, llm_base_url, model, embed_api_key, embed_base_url }
+    Self { client, llm_api_key, llm_base_url, llm_aig_token, model, embed_api_key, embed_base_url }
   }
 
   /// Chat completion — OpenAI-compatible
@@ -90,15 +92,17 @@ impl LlmService {
       temperature: 0.7,
     };
 
-    let response = self
+    let mut req = self
       .client
       .post(&url)
       .bearer_auth(&self.llm_api_key)
-      .json(&body)
-      .send()
-      .await
-      .context("Failed to send request to LLM")?;
+      .json(&body);
 
+    if let Some(ref aig_token) = self.llm_aig_token {
+      req = req.header("cf-aig-authorization", format!("Bearer {}", aig_token));
+    }
+
+    let response = req.send().await.context("Failed to send request to LLM")?;
     if !response.status().is_success() {
       let status = response.status();
       let text = response.text().await.unwrap_or_default();
@@ -125,38 +129,38 @@ impl LlmService {
   /// Generate embedding with EMBED_BASE_URL, independen from LLM backend
   /// Default: CF Workers AI @cf/baai/bge-small-en-v1.5
   pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
-      let body = CfEmbeddingRequest {
-        text: vec![text.to_string()],
-      };
+    let body = CfEmbeddingRequest {
+      text: vec![text.to_string()],
+    };
 
-      let response = self
-        .client
-        .post(&self.embed_base_url)
-        .bearer_auth(&self.embed_api_key)
-        .json(&body)
-        .send()
-        .await
-        .context("Failed to send embedding request")?;
+    let response = self
+      .client
+      .post(&self.embed_base_url)
+      .bearer_auth(&self.embed_api_key)
+      .json(&body)
+      .send()
+      .await
+      .context("Failed to send embedding request")?;
 
-      if !response.status().is_success() {
-        let status = response.status();
-        let err_text = response.text().await.unwrap_or_default();
+    if !response.status().is_success() {
+      let status = response.status();
+      let err_text = response.text().await.unwrap_or_default();
 
-        tracing::warn!("Embedding error {} — {}, using fallback", status, err_text);
-        
-        return Ok(simple_embedding(text));
-      }
+      tracing::warn!("Embedding error {} — {}, using fallback", status, err_text);
+      
+      return Ok(simple_embedding(text));
+    }
 
-      let data: CfEmbeddingResponse = response
-        .json()
-        .await
-        .context("Failed to parse embedding response")?;
+    let data: CfEmbeddingResponse = response
+      .json()
+      .await
+      .context("Failed to parse embedding response")?;
 
-      data.result
-        .data
-        .into_iter()
-        .next()
-        .context("No embedding returned")
+    data.result
+      .data
+      .into_iter()
+      .next()
+      .context("No embedding returned")
   }
 }
 
@@ -165,12 +169,14 @@ fn simple_embedding(text: &str) -> Vec<f32> {
   let mut vec = vec![0.0f32; 384];
   let text_lower = text.to_lowercase();
   for (i, ch) in text_lower.chars().enumerate() {
-      let idx = (ch as usize + i) % 384;
-      vec[idx] += 1.0;
+    let idx = (ch as usize + i) % 384;
+    vec[idx] += 1.0;
   }
+
   let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
   if norm > 0.0 {
-      vec.iter_mut().for_each(|x| *x /= norm);
+    vec.iter_mut().for_each(|x| *x /= norm);
   }
+  
   vec
 }

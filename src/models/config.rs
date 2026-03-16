@@ -6,6 +6,8 @@ pub struct Config {
   pub llm_api_key: String,
   pub llm_model: String,
   pub llm_base_url: String,
+  pub llm_aig_token: Option<String>,
+  pub llm_token_limit: u64,
 
   // Embedding backend
   pub embed_api_key: String,
@@ -24,9 +26,6 @@ pub struct Config {
   pub semantic_cache_ttl_seconds: u64,
   pub similarity_threshold: f32,
   pub system_prompt: String,
-
-  // User config
-  pub daily_request_limit: u64,
 }
 
 impl Config {
@@ -43,7 +42,12 @@ impl Config {
         .unwrap_or_else(|_| "@cf/meta/llama-3.3-70b-instruct-fp8-fast".into()),
       llm_base_url: std::env::var("LLM_BASE_URL")
         .context("LLM_BASE_URL must be set")?,
-
+      llm_aig_token: std::env::var("LLM_AIG_TOKEN").ok(),
+      llm_token_limit: std::env::var("LLM_TOKEN_LIMIT")
+        .unwrap_or_else(|_| "5000".into())
+        .parse()
+        .unwrap_or(5000),
+      
       embed_api_key,
       embed_base_url: std::env::var("EMBED_BASE_URL")
         .context("EMBED_BASE_URL must be set")?,
@@ -75,12 +79,7 @@ impl Config {
         .parse()
         .unwrap_or(0.92),
       system_prompt: std::env::var("SYSTEM_PROMPT")
-        .unwrap_or_else(|_| "Kamu adalah asisten AI yang ramah dan helpful.".into()),
-
-      daily_request_limit: std::env::var("DAILY_REQUEST_LIMIT")
-        .unwrap_or_else(|_| "500".into())
-        .parse()
-        .unwrap_or(500),
+        .unwrap_or_else(|_| "Kamu adalah asisten AI yang ramah dan helpful.".into())
     })
   }
 }

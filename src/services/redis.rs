@@ -138,43 +138,73 @@ impl RedisService {
     Ok(best_answer)
   }
 
-  /// Rate limit
-  pub async fn check_rate_limit(
+  /// Rate limiter
+  fn global_rate_limit_key() -> String {
+    let today = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .unwrap_or_default()
+      .as_secs() / 86400;
+
+    format!("sk_ai:ratelimit:global:{}", today)
+  }
+
+  /// Get token usage today
+  pub async fn get_global_usage(&self) -> Result<u64> {
+    let mut conn = self.conn.clone();
+    let key = Self::global_rate_limit_key();
+    let count: Option<u64> = conn.get::<_, Option<u64>>(&key).await?;
+    
+    Ok(count.unwrap_or(0))
+  }
+
+  /// Get user usage
+  pub async fn get_user_usage(&self, _guild_id: Option<&str>) -> Result<u64> {
+    let mut conn = self.conn.clone();
+    let key = Self::global_rate_limit_key();
+    let count: Option<u64> = conn.get::<_, Option<u64>>(&key).await?;
+
+    Ok(count.unwrap_or(0))
+  }
+
+  /// Add token usage
+  pub async fn add_token_usage(
     &self,
-    user_id: &str,
-    guild_id: Option<&str>,
-    daily_limit: u64,
+    _user_id: &str,
+    _guild_id: Option<&str>,
+    tokens_used: u64,
+    daily_token_limit: u64,
   ) -> Result<RateLimitResult> {
     let mut conn = self.conn.clone();
+    let key = Self::global_rate_limit_key();
 
-    // Reset every day, use UTC for suffix
-    let today = {
-      use std::time::{SystemTime, UNIX_EPOCH};
-      let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-      secs / 86400 // hari ke-N sejak epoch
-    };
+    let total: u64 = conn.incr::<_, _, u64>(&key, tokens_used).await?;
 
-    let key = match guild_id {
-      Some(gid) => format!("sk_ai:ratelimit:{}:{}:{}", gid, user_id, today),
-      None => format!("sk_ai:ratelimit:dm:{}:{}", user_id, today),
-    };
-
-    // INCR atomic
-    let count: u64 = conn.incr::<_, _, u64>(&key, 1u64).await?;
-
-    // Set TTL only for first request
-    if count == 1 {
+    // Set TTL hanya saat pertama kali
+    if total == tokens_used {
       conn.expire::<_, ()>(&key, 86400).await?;
     }
 
     Ok(RateLimitResult {
-      allowed: count <= daily_limit,
-      current: count,
-      limit: daily_limit,
-      remaining: daily_limit.saturating_sub(count),
+      allowed: true,
+      current: total,
+      limit: daily_token_limit,
+      remaining: daily_token_limit.saturating_sub(total),
+    })
+  }
+
+  /// Check token usage
+  pub async fn check_token_quota(
+    &self,
+    _user_id: &str,
+    guild_id: Option<&str>,
+    daily_token_limit: u64,
+  ) -> Result<RateLimitResult> {
+    let used = self.get_user_usage(guild_id).await?;
+    Ok(RateLimitResult {
+      allowed: used < daily_token_limit,
+      current: used,
+      limit: daily_token_limit,
+      remaining: daily_token_limit.saturating_sub(used),
     })
   }
 

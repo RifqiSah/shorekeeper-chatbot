@@ -2,7 +2,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde_json::json;
 
 use crate::{
-  AppState, models::chat::{ChatMessage, ChatRequest, ChatResponse, SemanticCacheEntry}, services::redis::RateLimitResult
+  AppState, models::chat::{ChatMessage, ChatRequest, ChatResponse, SemanticCacheEntry}
 };
 
 pub async fn chat_handler(
@@ -54,25 +54,29 @@ pub async fn chat_handler(
     }
   }
 
-  // Check rate limit
+  // Check token, current is daily
   match state
     .redis
-    .check_rate_limit(user_id, guild_id, state.config.daily_request_limit)
-    .await {
-      Ok(RateLimitResult { allowed: false, current, limit, .. }) => {
-        tracing::warn!("Rate limit exceeded - user: {}, count: {}/{}", user_id, current, limit);
-        return Err((
-          StatusCode::TOO_MANY_REQUESTS,
-          Json(json!({
-            "error": "Daily request limit reached. Try again tomorrow.",
-            "limit": limit,
-            "used": current,
-          })),
-        ));
-      },
-      Ok(r) => tracing::debug!("Rate limit ok - user: {}, {}/{}", user_id, r.current, r.limit),
-      Err(e) => tracing::warn!("Rate limit check failed ({}), allowing request", e),
+    .check_token_quota(user_id, guild_id, state.config.llm_token_limit)
+    .await
+  {
+    Ok(r) if !r.allowed => {
+      tracing::warn!(
+        "Token quota exceeded - user: {}, used: {}/{}", 
+        user_id, r.current, r.limit
+      );
+      return Err((
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(json!({
+          "error": "Daily token quota reached. Try again tomorrow.",
+          "tokens_used": r.current,
+          "limit": r.limit,
+        })),
+      ));
     }
+    Ok(r) => tracing::debug!("Token quota ok - user: {}, {}/{}", user_id, r.current, r.limit),
+    Err(e) => tracing::warn!("Token quota check failed ({}), allowing request", e),
+  }
 
   // Get conv history
   let mut history = state
@@ -111,11 +115,21 @@ pub async fn chat_handler(
     tokens_used
   );
 
+  // save token usage
+  if let Some(tokens) = tokens_used {
+    state
+      .redis
+      .add_token_usage(user_id, guild_id, tokens as u64, state.config.llm_token_limit)
+      .await
+      .ok();
+    }
+
   // Update conv history
   history.push(ChatMessage {
     role: "user".into(),
     content: user_message.clone(),
   });
+
   history.push(ChatMessage {
     role: "assistant".into(),
     content: reply.clone(),
@@ -140,6 +154,7 @@ pub async fn chat_handler(
       question: user_message.clone(),
       answer: reply.clone(),
     };
+    
     state
       .redis
       .save_semantic_cache(&cache_entry, state.config.semantic_cache_ttl_seconds)

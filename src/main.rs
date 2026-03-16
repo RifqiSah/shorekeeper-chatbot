@@ -45,6 +45,7 @@ async fn main() -> anyhow::Result<()> {
   let llm = Arc::new(LlmService::new(
     config.llm_api_key.clone(),
     config.llm_base_url.clone(),
+    config.llm_aig_token.clone(),
     config.llm_model.clone(),
     config.embed_api_key.clone(),
     config.embed_base_url.clone(),
