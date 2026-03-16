@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::models::chat::ChatMessage;
+use crate::schemas::chat::ChatMessage;
 
 pub struct LlmService {
   client: Client,

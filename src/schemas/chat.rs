@@ -33,11 +33,3 @@ pub struct SemanticCacheEntry {
   pub question: String,
   pub answer: String,
 }
-
-/// Health check response
-#[derive(Debug, Serialize)]
-pub struct HealthResponse {
-  pub status: String,
-  pub redis: bool,
-  pub version: String,
-}
