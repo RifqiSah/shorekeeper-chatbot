@@ -100,7 +100,7 @@ impl RedisService {
         if let Ok(entry) = serde_json::from_str::<SemanticCacheEntry>(&s) {
           let score = cosine_similarity(query_embedding, &entry.question_embedding);
           tracing::debug!(
-            "Semantic candidate: score={:.3} threshold={:.2} q={:?}",
+            "Cache candidate: score={:.3} threshold={:.2} q={:?}",
             score, threshold,
             &entry.question.chars().take(60).collect::<String>()
           );
@@ -116,12 +116,12 @@ impl RedisService {
 
     if best_answer.is_some() {
       tracing::info!(
-        "Semantic cache HIT score={:.3} q={:?}",
+        "Cache HIT score={:.3} q={:?}",
         best_score,
         &best_question.chars().take(60).collect::<String>()
       );
     } else {
-      tracing::debug!("Semantic cache MISS (best score below threshold {:.2})", threshold);
+      tracing::debug!("Cache MISS (best score below threshold {:.2})", threshold);
     }
 
     Ok(best_answer)

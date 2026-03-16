@@ -15,7 +15,6 @@ pub struct Chatbot {
 }
 
 impl Chatbot {
-  /// Init dari config — redis_url diambil dari config.redis_url()
   pub async fn new() -> anyhow::Result<Self> {
     let config = Arc::new(Config::from_env()?);
     let redis = Arc::new(RedisService::new(&config.redis_url()).await?);
@@ -28,6 +27,8 @@ impl Chatbot {
       config.llm_embed_base_url.clone(),
     ));
 
+    tracing::info!("Shorekeeper-AI loaded!");
+    
     Ok(Self { llm, redis, config })
   }
 
@@ -39,7 +40,6 @@ impl Chatbot {
     reset_context: bool,
   ) -> anyhow::Result<ChatResponse> {
     let message = message.trim().to_string();
-
     if message.is_empty() {
       anyhow::bail!("Message cannot be empty");
     }
@@ -55,18 +55,17 @@ impl Chatbot {
         .find_similar_cache(&query_embedding, self.config.llm_similarity_threshold)
         .await
       {
-        tracing::info!("Semantic cache HIT for user: {}", user_id);
+        tracing::info!("Cache HIT for user: {}", user_id);
         return Ok(ChatResponse { reply: cached, from_cache: true, tokens_used: None });
+      } else {
+        tracing::warn!("Cache MISS for user: {}", user_id);
       }
     }
 
     // get token quota
     let quota = self.redis.check_token_quota(self.config.llm_token_limit).await?;
     if !quota.allowed {
-      anyhow::bail!(
-        "Daily token quota reached ({}/{}). Try again tomorrow.",
-        quota.current, quota.limit
-      );
+      anyhow::bail!("Daily token quota reached ({}/{}). Try again tomorrow.", quota.current, quota.limit);
     }
 
     // build message
