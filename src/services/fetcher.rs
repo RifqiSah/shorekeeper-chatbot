@@ -138,7 +138,6 @@ fn parse_html(url: &str, html: &str) -> FetchResult {
     }
   }
 
-  // Bersihkan whitespace berlebih
   let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
 
   FetchResult { url: url.to_string(), title, text }
