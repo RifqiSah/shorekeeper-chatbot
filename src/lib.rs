@@ -8,10 +8,13 @@ pub use schemas::config::Config;
 pub use services::llm::LlmService;
 pub use services::redis::{RedisService, RateLimitResult};
 
+use crate::services::fetcher::{Fetcher, extract_urls};
+
 pub struct Chatbot {
   pub llm: Arc<LlmService>,
   pub redis: Arc<RedisService>,
   pub config: Arc<Config>,
+  fetcher: Fetcher,
 }
 
 impl Chatbot {
@@ -29,7 +32,7 @@ impl Chatbot {
 
     tracing::info!("Shorekeeper-AI loaded!");
     
-    Ok(Self { llm, redis, config })
+    Ok(Self { llm, redis, config, fetcher: Fetcher::new() })
   }
 
   pub async fn handle_message(
@@ -47,6 +50,28 @@ impl Chatbot {
     if reset_context {
       self.redis.clear_history(user_id, guild_id).await.ok();
     }
+
+    // has url?
+    let urls = extract_urls(&message);
+    let url_context = if !urls.is_empty() {
+      let mut contexts = vec![];
+      for url in &urls {
+        match self.fetcher.fetch_url(url).await {
+          Ok(result) => {
+            tracing::info!("Fetched URL: {}", url);
+            contexts.push(format!(
+              "=== Konten dari {} ===\n{}",
+              url,
+              result.truncate(6000)
+            ));
+          }
+          Err(e) => tracing::warn!("Failed to fetch {}: {}", url, e),
+        }
+      }
+      if contexts.is_empty() { None } else { Some(contexts.join("\n\n")) }
+    } else {
+      None
+    };
 
     // semantic cache
     let query_embedding = self.llm.embed(&message).await.unwrap_or_else(|_| vec![]);
@@ -77,7 +102,16 @@ impl Chatbot {
     }];
 
     messages.extend(history.clone());
-    messages.push(ChatMessage { role: "user".into(), content: message.clone() });
+
+    let user_content = match url_context {
+      Some(ctx) => format!(
+        "{}\n\nBerikut konten dari URL yang disebutkan:\n\n{}",
+        message, ctx
+      ),
+      None => message.clone(),
+    };
+
+    messages.push(ChatMessage { role: "user".into(), content: user_content });
 
     // call LLM
     let (reply, tokens_used) = self.llm.chat(messages, 1024).await?;
@@ -103,7 +137,7 @@ impl Chatbot {
     if !query_embedding.is_empty() {
       self.redis.save_semantic_cache(
         &SemanticCacheEntry {
-          question_embedding: query_embedding,
+          question_embedding: query_embedding.clone(),
           question: message,
           answer: reply.clone(),
         },
