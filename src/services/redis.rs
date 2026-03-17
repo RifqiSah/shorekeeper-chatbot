@@ -175,7 +175,7 @@ impl RedisService {
   pub async fn ping(&self) -> bool {
     let mut conn = self.conn.clone();
     redis::cmd("PING")
-      .query_async::<_, String>(&mut conn)
+      .query_async::<String>(&mut conn)
       .await
       .is_ok()
   }
