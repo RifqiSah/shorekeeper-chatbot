@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use reqwest::Client;
+use reqwest::{Client, header::{HeaderMap, HeaderValue}};
 use scraper::{Html, Selector};
 
 pub struct Fetcher {
@@ -8,7 +8,11 @@ pub struct Fetcher {
 
 impl Fetcher {
   pub fn new() -> Self {
+    let mut headers = HeaderMap::new();
+    headers.insert(reqwest::header::USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"));
+
     let client = Client::builder()
+      .default_headers(headers)
       .timeout(std::time::Duration::from_secs(15))
       .build()
       .expect("Failed to build fetcher client");
