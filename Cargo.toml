@@ -1,5 +1,5 @@
 [package]
-name = "shorekeeper-ai"
+name = "shorekeeper-chatbot"
 version = "1.0.0"
 edition = "2024"
 
