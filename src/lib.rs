@@ -30,7 +30,7 @@ impl Chatbot {
       config.llm_embed_base_url.clone(),
     ));
 
-    tracing::info!("Shorekeeper-AI loaded!");
+    tracing::info!("Shorekeeper-chatbot module loaded!");
     
     Ok(Self { llm, redis, config, fetcher: Fetcher::new() })
   }
