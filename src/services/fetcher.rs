@@ -55,6 +55,7 @@ impl Fetcher {
 }
 
 #[derive(Debug)]
+#[allow(unused)]
 pub struct FetchResult {
   pub url: String,
   pub title: Option<String>,

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 pub use schemas::chat::{ChatMessage, ChatRequest, ChatResponse, SemanticCacheEntry};
 pub use schemas::config::Config;
+pub use schemas::error::ChatbotError;
 pub use services::llm::LlmService;
 pub use services::redis::{RedisService, RateLimitResult};
 
@@ -31,7 +32,7 @@ impl Chatbot {
     ));
 
     tracing::info!("Shorekeeper-chatbot module loaded!");
-    
+
     Ok(Self { llm, redis, config, fetcher: Fetcher::new() })
   }
 
@@ -41,10 +42,10 @@ impl Chatbot {
     guild_id: Option<&str>,
     message: &str,
     reset_context: bool,
-  ) -> anyhow::Result<ChatResponse> {
+  ) -> Result<ChatResponse, ChatbotError> {
     let message = message.trim().to_string();
     if message.is_empty() {
-      anyhow::bail!("Message cannot be empty");
+      return Err(ChatbotError::EmptyMessage);
     }
 
     if reset_context {
@@ -59,11 +60,7 @@ impl Chatbot {
         match self.fetcher.fetch_url(url).await {
           Ok(result) => {
             tracing::info!("Fetched URL: {}", url);
-            contexts.push(format!(
-              "=== Konten dari {} ===\n{}",
-              url,
-              result.truncate(6000)
-            ));
+            contexts.push(format!("=== Konten dari {} ===\n{}", url, result.truncate(6000)));
           }
           Err(e) => tracing::warn!("Failed to fetch {}: {}", url, e),
         }
@@ -76,21 +73,24 @@ impl Chatbot {
     // semantic cache
     let query_embedding = self.llm.embed(&message).await.unwrap_or_else(|_| vec![]);
     if !query_embedding.is_empty() {
-      if let Ok(Some(cached)) = self.redis
-        .find_similar_cache(&query_embedding, self.config.llm_similarity_threshold)
-        .await
-      {
-        tracing::info!("Cache HIT for user: {}", user_id);
-        return Ok(ChatResponse { reply: cached, from_cache: true, tokens_used: None });
-      } else {
-        tracing::warn!("Cache MISS for user: {}", user_id);
+      match self.redis.find_similar_cache(&query_embedding, self.config.llm_similarity_threshold).await {
+        Ok(Some(cached)) => {
+          tracing::info!("Cache HIT for user: {}", user_id);
+          return Ok(ChatResponse { reply: cached, from_cache: true, tokens_used: None });
+        }
+        Ok(None) => tracing::debug!("Cache MISS for user: {}", user_id),
+        Err(e) => tracing::warn!("Semantic cache lookup failed: {}", e),
       }
     }
 
     // get token quota
-    let quota = self.redis.check_token_quota(self.config.llm_token_limit).await?;
+    let quota = self.redis
+      .check_token_quota(self.config.llm_token_limit)
+      .await
+      .map_err(|e| ChatbotError::RedisError(e.to_string()))?;
+
     if !quota.allowed {
-      anyhow::bail!("Daily token quota reached ({}/{}). Try again tomorrow.", quota.current, quota.limit);
+      return Err(ChatbotError::QuotaExceeded { current: quota.current, limit: quota.limit });
     }
 
     // build message
@@ -104,26 +104,25 @@ impl Chatbot {
     messages.extend(history.clone());
 
     let user_content = match url_context {
-      Some(ctx) => format!(
-        "{}\n\nBerikut konten dari URL yang disebutkan:\n\n{}",
-        message, ctx
-      ),
+      Some(ctx) => format!("{}\n\nBerikut konten dari URL yang disebutkan:\n\n{}", message, ctx),
       None => message.clone(),
     };
-
     messages.push(ChatMessage { role: "user".into(), content: user_content });
 
     // call LLM
-    let (reply, tokens_used) = self.llm.chat(messages, 1024).await?;
+    let (reply, tokens_used) = self.llm
+      .chat(messages, 1024)
+      .await
+      .map_err(|e| ChatbotError::LlmError(e.to_string()))?;
 
     tracing::info!("LLM response - user: {}, tokens: {:?}", user_id, tokens_used);
 
-    // save new token usage info
+    // save token usage info
     if let Some(tokens) = tokens_used {
       self.redis.add_token_usage(tokens as u64, self.config.llm_token_limit).await.ok();
     }
 
-    // save conversation history
+    // save conv history
     history.push(ChatMessage { role: "user".into(), content: message.clone() });
     history.push(ChatMessage { role: "assistant".into(), content: reply.clone() });
 
