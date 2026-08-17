@@ -9,7 +9,7 @@ pub use schemas::error::ChatbotError;
 pub use services::llm::LlmService;
 pub use services::redis::{RedisService, RateLimitResult};
 
-use crate::services::backend_store::{load_backends_from_file, spawn_watcher};
+use crate::services::backend_store::spawn_watcher;
 use crate::services::fetcher::{Fetcher, extract_urls};
 
 pub struct Chatbot {
@@ -21,22 +21,19 @@ pub struct Chatbot {
 }
 
 impl Chatbot {
-  pub async fn new() -> anyhow::Result<Self> {
-    let config = Arc::new(Config::from_env()?);
+  pub async fn new(config_path: String) -> anyhow::Result<Self> {
+    let (config, backends) = Config::from_file(&config_path)?;
+    let config = Arc::new(config);
+
     let redis = Arc::new(RedisService::new(&config.redis_url()).await?);
+    let llm = Arc::new(LlmService::new(backends.clone(), config.llm_embed_api_key.clone(), config.llm_embed_base_url.clone()));
 
-    let backends = load_backends_from_file(&config.backend_path)?;
-    tracing::debug!("Chatbot backend: {:?}", backends);
-
-    let llm = Arc::new(LlmService::new(
-      backends,
-      config.llm_embed_api_key.clone(),
-      config.llm_embed_base_url.clone(),
-    ));
-
-    let watcher = spawn_watcher(&config.backend_path, llm.clone())?;
+    let watcher = spawn_watcher(config.config_path.clone(), llm.clone())?;
 
     tracing::info!("Shorekeeper-chatbot module loaded!");
+    tracing::debug!("With config: {:?}", config);
+    tracing::debug!("With backends: {:?}", backends);
+
     Ok(Self { llm, redis, config, fetcher: Fetcher::new(), _backend_watcher: watcher })
   }
 
