@@ -9,6 +9,7 @@ pub use schemas::error::ChatbotError;
 pub use services::llm::LlmService;
 pub use services::redis::{RedisService, RateLimitResult};
 
+use crate::services::backend_store::{load_backends_from_file, spawn_watcher};
 use crate::services::fetcher::{Fetcher, extract_urls};
 
 pub struct Chatbot {
@@ -16,24 +17,27 @@ pub struct Chatbot {
   pub redis: Arc<RedisService>,
   pub config: Arc<Config>,
   fetcher: Fetcher,
+  _backend_watcher: notify::RecommendedWatcher,
 }
 
 impl Chatbot {
   pub async fn new() -> anyhow::Result<Self> {
     let config = Arc::new(Config::from_env()?);
     let redis = Arc::new(RedisService::new(&config.redis_url()).await?);
+
+    let backends = load_backends_from_file(&config.backend_path)?;
+    tracing::debug!("Chatbot backend: {:?}", backends);
+
     let llm = Arc::new(LlmService::new(
-      config.llm_api_key.clone(),
-      config.llm_base_url.clone(),
-      config.llm_aig_token.clone(),
-      config.llm_model.clone(),
+      backends,
       config.llm_embed_api_key.clone(),
       config.llm_embed_base_url.clone(),
     ));
 
-    tracing::info!("Shorekeeper-chatbot module loaded!");
+    let watcher = spawn_watcher(&config.backend_path, llm.clone())?;
 
-    Ok(Self { llm, redis, config, fetcher: Fetcher::new() })
+    tracing::info!("Shorekeeper-chatbot module loaded!");
+    Ok(Self { llm, redis, config, fetcher: Fetcher::new(), _backend_watcher: watcher })
   }
 
   pub async fn handle_message(
@@ -75,10 +79,11 @@ impl Chatbot {
     if !query_embedding.is_empty() {
       match self.redis.find_similar_cache(&query_embedding, self.config.llm_similarity_threshold).await {
         Ok(Some(cached)) => {
-          tracing::info!("Cache HIT for user: {}", user_id);
-          return Ok(ChatResponse { reply: cached, from_cache: true, tokens_used: None });
+          // tracing::info!("Cache HIT for user: {}", user_id);
+          return Ok(ChatResponse { reply: cached, backend: "cache".to_string(), from_cache: true, tokens_used: None });
         }
-        Ok(None) => tracing::debug!("Cache MISS for user: {}", user_id),
+        // Ok(None) => tracing::debug!("Cache MISS for user: {}", user_id),
+        Ok(None) => {},
         Err(e) => tracing::warn!("Semantic cache lookup failed: {}", e),
       }
     }
@@ -110,7 +115,7 @@ impl Chatbot {
     messages.push(ChatMessage { role: "user".into(), content: user_content });
 
     // call LLM
-    let (reply, tokens_used) = self.llm
+    let (backend_name, reply, tokens_used) = self.llm
       .chat(messages, 1024)
       .await
       .map_err(|e| ChatbotError::LlmError(e.to_string()))?;
@@ -144,7 +149,7 @@ impl Chatbot {
       ).await.ok();
     }
 
-    Ok(ChatResponse { reply, from_cache: false, tokens_used })
+    Ok(ChatResponse { reply, backend: backend_name, from_cache: false, tokens_used })
   }
 
   pub async fn get_usage(&self) -> anyhow::Result<RateLimitResult> {

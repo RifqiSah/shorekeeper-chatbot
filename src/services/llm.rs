@@ -1,18 +1,19 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
-use crate::schemas::chat::ChatMessage;
+use crate::schemas::{chat::ChatMessage, config::LlmBackend};
 
 pub struct LlmService {
   client: Client,
 
   // LLM
-  llm_api_key: String,
-  llm_base_url: String,
-  llm_aig_token: Option<String>,
-  pub model: String,
-
+  backends: RwLock<Vec<LlmBackend>>,
+  counter: AtomicUsize,
+  
   // Embedding, independent
   embed_api_key: String,
   embed_base_url: String,
@@ -61,44 +62,63 @@ struct CfEmbeddingResult {
 
 /// Services
 impl LlmService {
-  pub fn new(
-    llm_api_key: String,
-    llm_base_url: String,
-    llm_aig_token: Option<String>,
-    model: String,
-    embed_api_key: String,
-    embed_base_url: String,
-  ) -> Self {
+  pub fn new(backends: Vec<LlmBackend>, embed_api_key: String, embed_base_url: String) -> Self {
     let client = Client::builder()
       .timeout(std::time::Duration::from_secs(30))
       .build()
       .expect("Failed to build HTTP client");
 
-    Self { client, llm_api_key, llm_base_url, llm_aig_token, model, embed_api_key, embed_base_url }
+    Self { client, backends: RwLock::new(backends), counter: AtomicUsize::new(0), embed_api_key, embed_base_url }
+  }
+
+  /// can change backend from runtime
+  pub async fn set_backends(&self, backends: Vec<LlmBackend>) {
+    *self.backends.write().await = backends;
+  }
+
+  pub async fn backend_names(&self) -> Vec<String> {
+    self.backends.read().await.iter().map(|b| b.name.clone()).collect()
   }
 
   /// Chat completion — OpenAI-compatible
-  pub async fn chat(
-    &self,
-    messages: Vec<ChatMessage>,
-    max_tokens: u32,
-  ) -> Result<(String, Option<u32>)> {
-    let url = format!("{}/chat/completions", self.llm_base_url);
+  pub async fn chat(&self, messages: Vec<ChatMessage>, max_tokens: u32) -> Result<(String, String, Option<u32>)> {
+    let backends = self.backends.read().await.clone(); // snapshot
+    let n = backends.len();
+    anyhow::ensure!(n > 0, "No LLM backend configured");
+
+    let start = self.counter.fetch_add(1, Ordering::Relaxed) % n;
+    let mut last_err = None;
+
+    for i in 0..n {
+      let backend = &backends[(start + i) % n];
+      match self.try_chat(backend, &messages, max_tokens).await {
+        Ok(result) => {
+          tracing::info!("Answered by backend '{}'", backend.name);
+          return Ok(result);
+        }
+        Err(e) => {
+          tracing::warn!("Backend '{}' failed: {e}, trying next", backend.name);
+          last_err = Some(e);
+        }
+      }
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("No LLM backend configured")))
+  }
+
+  async fn try_chat(&self, backend: &LlmBackend, messages: &[ChatMessage], max_tokens: u32) -> Result<(String, String, Option<u32>)> {
+    let url = format!("{}/chat/completions", backend.base_url);
 
     let body = ChatCompletionRequest {
-      model: self.model.clone(),
-      messages,
+      model: backend.model.clone(),
+      messages: messages.to_vec(),
       max_tokens,
       temperature: 0.7,
     };
 
-    let mut req = self
-      .client
-      .post(&url)
-      .bearer_auth(&self.llm_api_key)
-      .json(&body);
+    let mut req = self.client.post(&url).bearer_auth(&backend.api_key).json(&body);
 
-    if let Some(ref aig_token) = self.llm_aig_token {
+    if let Some(ref aig_token) = backend.aig_token {
       req = req.header("cf-aig-authorization", format!("Bearer {}", aig_token));
     }
 
@@ -109,21 +129,13 @@ impl LlmService {
       anyhow::bail!("LLM API error {}: {}", status, text);
     }
 
-    let data: ChatCompletionResponse = response
-      .json()
-      .await
-      .context("Failed to parse LLM response")?;
+    let data: ChatCompletionResponse = response.json().await.context("Failed to parse LLM response")?;
 
-    let reply = data
-      .choices
-      .into_iter()
-      .next()
+    let reply = data.choices.into_iter().next()
       .map(|c| c.message.content)
       .unwrap_or_else(|| "Maaf, tidak ada respon.".into());
 
-    let tokens = data.usage.map(|u| u.total_tokens);
-
-    Ok((reply, tokens))
+    Ok((backend.name.clone(), reply, data.usage.map(|u| u.total_tokens)))
   }
 
   /// Generate embedding with EMBED_BASE_URL, independen from LLM backend

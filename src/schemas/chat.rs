@@ -15,6 +15,7 @@ pub struct ChatRequest {
 #[derive(Debug, Serialize)]
 pub struct ChatResponse {
   pub reply: String,
+  pub backend: String,
   pub from_cache: bool,
   pub tokens_used: Option<u32>,
 }

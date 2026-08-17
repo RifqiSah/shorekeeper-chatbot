@@ -1,4 +1,40 @@
+use std::{fmt, path::PathBuf};
+
 use anyhow::Context;
+use serde::Deserialize;
+
+#[derive(Clone, Deserialize)]
+pub struct LlmBackend {
+  pub name: String,
+  pub api_key: String,
+  pub base_url: String,
+  pub model: String,
+
+  #[serde(default)]
+  pub aig_token: Option<String>, // for CF AI Gateway
+}
+
+impl fmt::Debug for LlmBackend {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("LlmBackend")
+      .field("name", &self.name)
+      .field("base_url", &self.base_url)
+      .field("model", &self.model)
+
+      // redacted value
+      .field("api_key", &redact(&self.api_key))
+      .field("aig_token", &self.aig_token.as_deref().map(redact))
+      .finish()
+  }
+}
+
+fn redact(s: &str) -> String {
+  let n = s.len();
+  if n <= 8 {
+    return "****".into();
+  }
+  format!("{}...{}", &s[..4], &s[n - 4..])
+}
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -7,10 +43,7 @@ pub struct Config {
   pub redis_port: u32,
 
   // LLM backend
-  pub llm_api_key: String,
-  pub llm_model: String,
-  pub llm_base_url: String,
-  pub llm_aig_token: Option<String>,
+  pub backend_path: PathBuf,
   pub llm_token_limit: u64,
 
   // Embedding backend
@@ -27,29 +60,22 @@ pub struct Config {
 
 impl Config {
   pub fn from_env() -> anyhow::Result<Self> {
-    let llm_api_key = std::env::var("LLM_API_KEY")
-      .context("LLM_API_KEY must be set")?;
-
-    let llm_embed_api_key = std::env::var("LLM_EMBED_API_KEY")
-      .unwrap_or_else(|_| llm_api_key.clone());
-
     Ok(Self {
       redis_host: std::env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".into()),
       redis_port: std::env::var("REDIS_PORT")
         .unwrap_or_else(|_| "6379".into())
         .parse()
         .unwrap_or(6379),
-      
-      llm_api_key,
-      llm_model: std::env::var("LLM_MODEL").unwrap_or_else(|_| "@cf/meta/llama-3.3-70b-instruct-fp8-fast".into()),
-      llm_base_url: std::env::var("LLM_BASE_URL").context("LLM_BASE_URL must be set")?,
-      llm_aig_token: std::env::var("LLM_AIG_TOKEN").ok(),
+
+      backend_path: std::env::var("LLM_BACKENDS_FILE")
+        .unwrap_or_else(|_| "config_llm_backends.json".into())
+        .into(),
       llm_token_limit: std::env::var("LLM_TOKEN_LIMIT")
         .unwrap_or_else(|_| "5000".into())
         .parse()
         .unwrap_or(5000),
       
-      llm_embed_api_key,
+      llm_embed_api_key: std::env::var("LLM_EMBED_API_KEY").context("LLM_EMBED_API_KEY must be set")?,
       llm_embed_base_url: std::env::var("LLM_EMBED_BASE_URL").context("EMBED_BASE_URL must be set")?,
       
       llm_max_history_messages: std::env::var("LLM_MAX_HISTORY_MESSAGES")

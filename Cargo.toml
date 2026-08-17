@@ -1,6 +1,6 @@
 [package]
 name = "shorekeeper-chatbot"
-version = "2.0.2"
+version = "2.1.0"
 edition = "2024"
 
 [dependencies]
@@ -15,3 +15,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1.12"
 anyhow = "1"
 thiserror = "2"
+notify = "8.2"
+tokio = "1.53"
