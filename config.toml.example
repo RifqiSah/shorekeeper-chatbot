@@ -10,6 +10,10 @@ semantic_cache_ttl_seconds = 86400
 similarity_threshold = 0.75
 system_prompt = "Kamu adalah asisten AI bernama Shorekeeper, yang ramah dan helpful. Jawab dalam bahasa yang sama dengan user."
 
+[llm.embed]
+api_key = ""
+base_url = "https://api.example.com/v1/embed"
+
 [[backends]]
 name = "name-1"
 api_key = "xxx"
