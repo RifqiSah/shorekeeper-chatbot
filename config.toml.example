@@ -1,3 +1,15 @@
+[redis]
+host = "localhost"
+port = 6379
+
+[llm]
+token_limit = 8000
+max_history_messages = 15
+context_ttl_seconds = 1800
+semantic_cache_ttl_seconds = 86400
+similarity_threshold = 0.75
+system_prompt = "Kamu adalah asisten AI bernama Shorekeeper, yang ramah dan helpful. Jawab dalam bahasa yang sama dengan user."
+
 [[backends]]
 name = "name-1"
 api_key = "xxx"
