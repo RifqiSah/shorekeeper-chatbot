@@ -1,4 +1,0 @@
-[
-  { "name": "name-1", "api_key": "xxx", "base_url": "https://api.example.com/v1", "model": "model-name-1", "aig_token": "zzz" },
-  { "name": "name-2", "api_key": "yyy", "base_url": "https://api.example.com/v2", "model": "model-name-2" }
-]

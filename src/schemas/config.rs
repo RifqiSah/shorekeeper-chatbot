@@ -68,7 +68,7 @@ impl Config {
         .unwrap_or(6379),
 
       backend_path: std::env::var("LLM_BACKENDS_FILE")
-        .unwrap_or_else(|_| "config_llm_backends.json".into())
+        .unwrap_or_else(|_| "config.toml".into())
         .into(),
       llm_token_limit: std::env::var("LLM_TOKEN_LIMIT")
         .unwrap_or_else(|_| "5000".into())

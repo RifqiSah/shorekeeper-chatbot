@@ -9,11 +9,16 @@ use crate::services::llm::LlmService;
 
 pub fn load_backends_from_file(path: &PathBuf) -> Result<Vec<LlmBackend>> {
   let raw = std::fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
-  let backends: Vec<LlmBackend> = serde_json::from_str(&raw).with_context(|| format!("Invalid JSON in {}", path.display()))?;
 
-  anyhow::ensure!(!backends.is_empty(), "{} must contain at least 1 backend", path.display());
+  #[derive(serde::Deserialize)]
+  struct BackendsFile {
+    backends: Vec<LlmBackend>,
+  }
 
-  Ok(backends)
+  let parsed: BackendsFile = toml::from_str(&raw).with_context(|| format!("Invalid TOML in {}", path.display()))?;
+
+  anyhow::ensure!(!parsed.backends.is_empty(), "{} must contain at least 1 backend", path.display());
+  Ok(parsed.backends)
 }
 
 pub fn spawn_watcher(path: &PathBuf, llm: Arc<LlmService>) -> Result<notify::RecommendedWatcher> {
