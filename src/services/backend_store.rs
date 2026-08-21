@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use notify::{RecursiveMode, Watcher, Event};
