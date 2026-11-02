@@ -116,17 +116,16 @@ fn parse_html(url: &str, html: &str) -> FetchResult {
   let mut text = String::new();
 
   'outer: for selector_str in &content_selectors {
-    if let Ok(sel) = Selector::parse(selector_str) {
-      if let Some(element) = document.select(&sel).next() {
+    if let Ok(sel) = Selector::parse(selector_str)
+      && let Some(element) = document.select(&sel).next() {
         for node in element.descendants() {
           // Skip noise tags
-          if let Some(el) = node.value().as_element() {
-            if noise_tags.contains(&el.name()) {
+          if let Some(el) = node.value().as_element()
+            && noise_tags.contains(&el.name()) {
               continue;
             }
-          }
 
-          // Get teks
+          // Get text
           if let Some(t) = node.value().as_text() {
             let t = t.trim();
             if !t.is_empty() {
@@ -140,7 +139,6 @@ fn parse_html(url: &str, html: &str) -> FetchResult {
           break 'outer;
         }
       }
-    }
   }
 
   let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -154,7 +152,7 @@ pub fn extract_urls(text: &str) -> Vec<String> {
   re.find_iter(text)
     .map(|m| {
       let url = m.as_str();
-      let trimmed = url.trim_end_matches(|c: char| matches!(c, '.' | ',' | ')' | ']' | '!' | '?'));
+      let trimmed = url.trim_end_matches(['.', ',', ')', ']', '!', '?']);
       trimmed.to_string()
     })
     .filter(|u| u.len() > 10)

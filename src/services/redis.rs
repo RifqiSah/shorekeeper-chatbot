@@ -96,8 +96,8 @@ impl RedisService {
 
     for key in keys {
       let raw: Option<String> = conn.get::<_, Option<String>>(&key).await?;
-      if let Some(s) = raw {
-        if let Ok(entry) = serde_json::from_str::<SemanticCacheEntry>(&s) {
+      if let Some(s) = raw
+        && let Ok(entry) = serde_json::from_str::<SemanticCacheEntry>(&s) {
           let score = cosine_similarity(query_embedding, &entry.question_embedding);
           tracing::debug!(
             "Cache candidate: score={:.3} threshold={:.2} q={:?}",
@@ -111,7 +111,6 @@ impl RedisService {
             best_question = entry.question.clone();
           }
         }
-      }
     }
 
     if best_answer.is_some() {
