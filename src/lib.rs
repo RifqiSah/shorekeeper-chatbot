@@ -17,7 +17,6 @@ pub struct Chatbot {
   pub redis: Arc<RedisService>,
   pub config: Arc<Config>,
   fetcher: Fetcher,
-  // _backend_watcher: notify::RecommendedWatcher,
 }
 
 impl Chatbot {
@@ -28,13 +27,10 @@ impl Chatbot {
     let redis = Arc::new(RedisService::new(&config.redis_url()).await?);
     let llm = Arc::new(LlmService::new(backends.clone(), config.llm_embed_api_key.clone(), config.llm_embed_base_url.clone()));
 
-    // let watcher = spawn_watcher(config.config_path.clone(), llm.clone())?;
-
     tracing::info!("Shorekeeper-chatbot module loaded!");
     tracing::debug!("With config: {:?}", config);
     tracing::debug!("With backends: {:?}", backends);
 
-    // Ok(Self { llm, redis, config, fetcher: Fetcher::new(), _backend_watcher: watcher })
     Ok(Self { llm, redis, config, fetcher: Fetcher::new() })
   }
 
